@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import queue
 from typing import Dict, List, Optional, Set
+import subprocess
 
 import requests
 from tqdm import tqdm
@@ -67,6 +68,9 @@ def fetch_allimages(
     max_retries: int = 3,
     user_agent: str = "svgllm-bot/0.1 (contact: jacobasmuth@gmail.com)",
     concurrency: int = 4,
+    rclone_remote: Optional[str] = None,
+    rclone_dir: Optional[str] = None,
+    rclone_batch: int = 10,
 ) -> None:
     ensure_dir(out_dir)
     t_start = time.perf_counter()
@@ -188,6 +192,18 @@ def fetch_allimages(
             q.put(None)
         q.join()
 
+        # Optional: sync to Google Drive via rclone
+        if rclone_remote and rclone_dir:
+            remote_path = f"{rclone_remote}:{rclone_dir}"
+            try:
+                print(f"[sync] rclone copy {out_dir} -> {remote_path}")
+                subprocess.run([
+                    "rclone", "copy", out_dir, remote_path,
+                    "--ignore-existing", "--transfers", str(max(4, concurrency)),
+                ], check=False)
+            except FileNotFoundError:
+                print("[sync] rclone not found; install with: sudo apt-get install -y rclone")
+
         elapsed = time.perf_counter() - t_start
         if saved_count:
             print(f"[timing] total: {saved_count} files, {bytes_total/1024.0/1024.0:.2f} MiB in {elapsed:.1f}s, {saved_count/elapsed:.2f} files/s")
@@ -204,6 +220,9 @@ def parse_args() -> argparse.ArgumentParser:
     p.add_argument("--max-retries", type=int, default=3)
     p.add_argument("--user-agent", type=str, default="svgllm-bot/0.1 (contact: jacobasmuth@gmail.com)")
     p.add_argument("--concurrency", type=int, default=4)
+    p.add_argument("--rclone-remote", type=str, default=None, help="Optional rclone remote name (e.g., gdrive)")
+    p.add_argument("--rclone-dir", type=str, default=None, help="Path on the remote (e.g., svgllm/commons_svgs_api)")
+    p.add_argument("--rclone-batch", type=int, default=10, help="Batch size to trigger rclone sync (not used in final sync)")
     return p
 
 
@@ -218,6 +237,9 @@ def main() -> None:
         max_retries=a.max_retries,
         user_agent=a.user_agent,
         concurrency=a.concurrency,
+        rclone_remote=a.rclone_remote,
+        rclone_dir=a.rclone_dir,
+        rclone_batch=a.rclone_batch,
     )
 
 
