@@ -13,13 +13,12 @@ from svgllm.renderer import render_svg_to_rgb, is_svg_valid
 
 def find_svg_files(root_dir: str, recursive: bool = True) -> List[str]:
     if recursive:
-        paths = glob(os.path.join(root_dir, "**", "*.svg"), recursive=True) + 
-                glob(os.path.join(root_dir, "**", "*.svgz"), recursive=True)
+        paths = glob(os.path.join(root_dir, "*.svg"))
     else:
         paths = [
             os.path.join(root_dir, f)
             for f in os.listdir(root_dir)
-            if f.lower().endswith((".svg", ".svgz"))
+            if f.lower().endswith((".svg"))
         ]
     paths = sorted(paths)
     return paths
