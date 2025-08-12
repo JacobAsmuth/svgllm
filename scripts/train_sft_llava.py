@@ -78,6 +78,10 @@ def build_trainer(
         torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
         low_cpu_mem_usage=True,
     )
+    # Reduce activation memory
+    model.gradient_checkpointing_enable()
+    if hasattr(model, "config"):
+        model.config.use_cache = False
     processor = AutoProcessor.from_pretrained(model_id)
 
     collator = Collator(processor)
@@ -86,6 +90,7 @@ def build_trainer(
         output_dir=output_dir,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=1,
+        gradient_checkpointing=True,
         learning_rate=2e-5,
         num_train_epochs=1,
         logging_steps=10,
