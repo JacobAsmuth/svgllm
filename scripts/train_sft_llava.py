@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from typing import List, Tuple
+import os
 
 import torch
 from torch.utils.data import DataLoader
@@ -19,6 +20,7 @@ PROMPT_TEXT = "Reproduce this image as an SVG."
 @dataclass
 class Collator:
     processor: AutoProcessor
+    max_length: int
 
     def __call__(self, batch: List) -> dict:
         images: List[Image.Image] = [ex.image for ex in batch]
@@ -49,13 +51,26 @@ class Collator:
             prompt_texts.append(self.processor.apply_chat_template(user_only, add_generation_prompt=True))
             full_texts.append(self.processor.apply_chat_template(with_assistant, add_generation_prompt=False))
 
-        # Tokenize full inputs with images
-        model_inputs = self.processor(images=images, text=full_texts, return_tensors="pt", padding=True)
+        # Tokenize full inputs with images (truncate to control memory)
+        model_inputs = self.processor(
+            images=images,
+            text=full_texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+        )
 
         # Compute labels by masking out the prompt segment
         labels = model_inputs["input_ids"].clone()
         # Get prompt lengths per-sample
-        prompt_tokenized = self.processor.tokenizer(prompt_texts, return_tensors="pt", padding=True)
+        prompt_tokenized = self.processor.tokenizer(
+            prompt_texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+        )
         # Use actual lengths before padding
         prompt_lengths: List[int] = [int(l) for l in (prompt_tokenized["attention_mask"].sum(dim=1))]
         for i, pl in enumerate(prompt_lengths):
@@ -70,6 +85,7 @@ def build_trainer(
     output_dir: str,
     batch_size: int,
     max_items: int,
+    max_length: int,
 ) -> Trainer:
     dataset = SvgSftDataset(data_dir, image_size=(256, 256), max_items=max_items)
 
@@ -84,7 +100,7 @@ def build_trainer(
         model.config.use_cache = False
     processor = AutoProcessor.from_pretrained(model_id)
 
-    collator = Collator(processor)
+    collator = Collator(processor, max_length=max_length)
 
     args = TrainingArguments(
         output_dir=output_dir,
@@ -120,17 +136,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", type=str, default="runs/sft-llava")
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--max-items", type=int, default=64)
+    p.add_argument("--max-length", type=int, default=4096, help="Max token length for text inputs")
     p.add_argument("--dry-run", action="store_true", help="Build a batch and exit without training")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    # Help CUDA memory behavior
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True  # type: ignore[attr-defined]
     if args.dry_run:
         # Build dataset and processor, collate a small batch to validate shapes
         ds = SvgSftDataset(args.data_dir, image_size=(256, 256), max_items=min(2, args.max_items))
         processor = AutoProcessor.from_pretrained(args.model_id)
-        collator = Collator(processor)
+        collator = Collator(processor, max_length=args.max_length)
         batch = [ds[0]] if len(ds) > 0 else []
         if len(ds) > 1:
             batch.append(ds[1])
@@ -145,6 +166,7 @@ def main() -> None:
         output_dir=args.output_dir,
         batch_size=args.batch_size,
         max_items=args.max_items,
+        max_length=args.max_length,
     )
     trainer.train()
 
