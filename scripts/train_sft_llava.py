@@ -86,8 +86,9 @@ def build_trainer(
     batch_size: int,
     max_items: int,
     max_length: int,
+    image_size: int,
 ) -> Trainer:
-    dataset = SvgSftDataset(data_dir, image_size=(256, 256), max_items=max_items)
+    dataset = SvgSftDataset(data_dir, image_size=(image_size, image_size), max_items=max_items)
 
     model = LlavaForConditionalGeneration.from_pretrained(
         model_id,
@@ -137,6 +138,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--max-items", type=int, default=64)
     p.add_argument("--max-length", type=int, default=4096, help="Max token length for text inputs")
+    p.add_argument("--image-size", type=int, default=224, help="Rendered image size (pixels)")
     p.add_argument("--dry-run", action="store_true", help="Build a batch and exit without training")
     return p.parse_args()
 
@@ -149,7 +151,7 @@ def main() -> None:
         torch.backends.cuda.matmul.allow_tf32 = True  # type: ignore[attr-defined]
     if args.dry_run:
         # Build dataset and processor, collate a small batch to validate shapes
-        ds = SvgSftDataset(args.data_dir, image_size=(256, 256), max_items=min(2, args.max_items))
+        ds = SvgSftDataset(args.data_dir, image_size=(args.image_size, args.image_size), max_items=min(2, args.max_items))
         processor = AutoProcessor.from_pretrained(args.model_id)
         collator = Collator(processor, max_length=args.max_length)
         batch = [ds[0]] if len(ds) > 0 else []
@@ -167,6 +169,7 @@ def main() -> None:
         batch_size=args.batch_size,
         max_items=args.max_items,
         max_length=args.max_length,
+        image_size=args.image_size,
     )
     trainer.train()
 
